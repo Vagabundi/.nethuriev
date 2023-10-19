@@ -32,9 +32,9 @@ class SparseVectors
         return vector;
     }
 
-    public static ConcurrentDictionary<int, int> CompressSparseVector(int[] vector)
+    public static Dictionary<int, int> CompressSparseVector(int[] vector)
     {
-        var sparseVector = new ConcurrentDictionary<int, int>();
+        var sparseVector = new Dictionary<int, int>();
 
         for (int i = 0; i < vector.Length; i++)
         {
@@ -49,29 +49,46 @@ class SparseVectors
 
     public static Dictionary<int, int> CompressSparseVectorMultithreaded(int[] denseVector)
     {
-        var sparseVector = new Dictionary<int, int>();
-
-        int blockSize = 1000000;
+        int blockSize = 100000;
         int numBlocks = (denseVector.Length + blockSize - 1) / blockSize;
+
+        var tasks = new Task<Dictionary<int, int>>[numBlocks];
 
         for (int blockIndex = 0; blockIndex < numBlocks; blockIndex++)
         {
             int start = blockIndex * blockSize;
             int end = Math.Min(start + blockSize, denseVector.Length);
 
-            Parallel.For(start, end, i =>
+            tasks[blockIndex] = Task.Run(() =>
             {
-                if (denseVector[i] != 0)
+                var sparseVector = new Dictionary<int, int>();
+
+                for (int i = start; i < end; i++)
                 {
-                    lock (sparseVector)
+                    if (denseVector[i] != 0)
                     {
                         sparseVector[i] = denseVector[i];
                     }
                 }
+
+                return sparseVector;
             });
         }
 
-        return sparseVector;
+        var result = new Dictionary<int, int>();
+
+        Task.WhenAll(tasks).Wait();
+
+        foreach (var task in tasks)
+        {
+            var partialResult = task.Result;
+            foreach (var kvp in partialResult)
+            {
+                result[kvp.Key] = kvp.Value;
+            }
+        }
+
+        return result;
     }
 
 
