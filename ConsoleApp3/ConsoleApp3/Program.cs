@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Collections.Concurrent;
 using System.Diagnostics;
@@ -34,64 +34,61 @@ class SparseVectors
 
     public static Dictionary<int, int> CompressSparseVector(int[] vector)
     {
-        var sparseVector = new Dictionary<int, int>();
+        var denseVector = new Dictionary<int, int>();
 
         for (int i = 0; i < vector.Length; i++)
         {
             if (vector[i] != 0)
             {
-                sparseVector[i] = vector[i];
+                denseVector[i] = vector[i];
             }
         }
-
-        return sparseVector;
+        return denseVector;
     }
-
-    public static Dictionary<int, int> CompressSparseVectorMultithreaded(int[] denseVector)
+    public static Dictionary<int, int> CompressSparseVectorMultithreaded2(int[] sparseVector)
     {
-        int blockSize = 100000;
-        int numBlocks = (denseVector.Length + blockSize - 1) / blockSize;
+        var compressedSparseVector = new Dictionary<int, int>();
+        int elements = sparseVector.Length;
 
-        var tasks = new Task<Dictionary<int, int>>[numBlocks];
+        int tasksCount = Environment.ProcessorCount;
 
-        for (int blockIndex = 0; blockIndex < numBlocks; blockIndex++)
+        Task[] tasks = new Task[tasksCount];
+        object lockObj = new object();
+        int elementsPerTask = elements / tasksCount;
+
+        List<Dictionary<int, int>> localDictionaries = new List<Dictionary<int, int>>(tasksCount);
+
+        for (int i = 0; i < tasksCount; i++)
         {
-            int start = blockIndex * blockSize;
-            int end = Math.Min(start + blockSize, denseVector.Length);
+            localDictionaries.Add(new Dictionary<int, int>());
+            int start = i * elementsPerTask;
+            int end = (i == tasksCount - 1) ? elements : start + elementsPerTask;
 
-            tasks[blockIndex] = Task.Run(() =>
+            tasks[i] = Task.Factory.StartNew(state =>
             {
-                var sparseVector = new Dictionary<int, int>();
-
-                for (int i = start; i < end; i++)
+                var localDict = (Dictionary<int, int>)state;
+                for (int j = start; j < end; j++)
                 {
-                    if (denseVector[i] != 0)
+                    if (sparseVector[j] != 0)
                     {
-                        sparseVector[i] = denseVector[i];
+                        localDict[j] = sparseVector[j];
                     }
                 }
-
-                return sparseVector;
-            });
+            }, localDictionaries[i]);
         }
-
-        var result = new Dictionary<int, int>();
-
         Task.WhenAll(tasks).Wait();
-
-        foreach (var task in tasks)
+        foreach (var localDict in localDictionaries)
         {
-            var partialResult = task.Result;
-            foreach (var kvp in partialResult)
+            lock (lockObj)
             {
-                result[kvp.Key] = kvp.Value;
+                foreach (var kvp in localDict)
+                {
+                    compressedSparseVector[kvp.Key] = kvp.Value;
+                }
             }
         }
-
-        return result;
+        return compressedSparseVector;
     }
-
-
     static void MeasureExecutionTime(Action action, string operationName)
     {
         Stopwatch stopwatch = new Stopwatch();
@@ -113,9 +110,11 @@ class SparseVectors
         
             MeasureExecutionTime(() => CompressSparseVector(denseVector), "Single-threaded Compression");
 
-            MeasureExecutionTime(() => CompressSparseVectorMultithreaded(denseVector), "Multi-threaded Compression");
+            MeasureExecutionTime(() => CompressSparseVectorMultithreaded2(denseVector), "Multi-threaded Compression");
      
             Console.WriteLine();
         }
+     
+        
     }
 }
